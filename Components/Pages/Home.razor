@@ -1,0 +1,270 @@
+﻿@using Microsoft.AspNetCore.Components.Forms
+@using SecureScan.Services
+@inject IJSRuntime JS
+@page "/"
+
+<h1>SecureScan 程式碼安全掃描器</h1>
+<p>掃描本機專案或貼上程式碼，檢測 OWASP Top 10 風險。</p>
+
+<div class="scan-mode-tabs">
+    <button class="tab-btn @(ScanMode == "folder" ? "active" : "")" @onclick="SetFolderMode">📁 掃描資料夾</button>
+    <button class="tab-btn @(ScanMode == "paste" ? "active" : "")" @onclick="SetPasteMode">📋 貼上程式碼</button>
+</div>
+
+@if (ScanMode == "folder")
+{
+    <div class="input-section">
+        <label for="folderPath">請輸入或貼上您要掃描的資料夾路徑：</label>
+        <input type="text" id="folderPath" class="form-control" style="width:100%"
+               placeholder="例如：C:\Users\YourName\source\repos\MyProject" @bind="FolderPath" />
+    </div>
+    <button class="scan-btn" @onclick="RunFolderScan" disabled="@string.IsNullOrWhiteSpace(FolderPath)">
+        @(IsScanning ? "掃描中..." : "🔍 掃描資料夾")
+    </button>
+}
+else
+{
+    <div class="input-section">
+        <label for="codeInput">程式碼貼上區：</label>
+        <textarea id="codeInput" class="form-control" style="width:100%;min-height:160px"
+                  placeholder="請在此貼上您的程式碼..." @bind="SourceCode"></textarea>
+    </div>
+    <button class="scan-btn" @onclick="RunCodeScan" disabled="@string.IsNullOrWhiteSpace(SourceCode)">
+        @(IsScanning ? "掃描中..." : "🔍 執行掃描")
+    </button>
+}
+
+@if (ScanResults?.Any() == true)
+{
+    <div class="scan-summary">
+        <h3>掃描結果摘要</h3>
+        <div class="summary-cards">
+            <div class="summary-card high">
+                <span class="count">@ScanResults.Count(r => r.Level == "高")</span>
+                <span class="label">高風險</span>
+            </div>
+            <div class="summary-card medium">
+                <span class="count">@ScanResults.Count(r => r.Level == "中")</span>
+                <span class="label">中風險</span>
+            </div>
+            <div class="summary-card low">
+                <span class="count">@ScanResults.Count(r => r.Level == "低")</span>
+                <span class="label">低風險</span>
+            </div>
+        </div>
+        
+        @if (Advisor.IsConfigured)
+        {
+            <div class="batch-actions">
+                <h4>🤖 AI 報告選項</h4>
+                <div class="selection-buttons">
+                    <button class="select-btn" @onclick="SelectAll">全選</button>
+                    <button class="select-btn" @onclick="SelectNone">取消全選</button>
+                    <button class="select-btn high" @onclick="SelectHighRisk">僅高風險</button>
+                </div>
+                <p class="selection-info">已選取 @SelectedFindings.Count / @ScanResults.Count 項</p>
+                <button class="report-btn" @onclick="GenerateBatchReport" disabled="@(IsGeneratingReport || SelectedFindings.Count == 0)">
+                    @(IsGeneratingReport ? "🔄 產生中..." : "📝 產生 AI 安全報告")
+                </button>
+            </div>
+        }
+    </div>
+
+    @if (!string.IsNullOrWhiteSpace(BatchReport))
+    {
+        <div class="report-container">
+            <div class="report-header">
+                <h3>📋 AI 安全報告</h3>
+                <div class="report-actions">
+                    <button class="action-btn" @onclick="CopyReport">📋 複製內容</button>
+                    <button class="action-btn" @onclick="ExportMarkdown">📥 匯出 MD</button>
+                </div>
+            </div>
+            <div class="report-body markdown-content">
+                @((MarkupString)Markdig.Markdown.ToHtml(BatchReport.Trim()))
+            </div>
+        </div>
+    }
+
+    <h3>詳細結果 (@ScanResults.Count 項)</h3>
+    
+    @foreach (var group in ScanResults.GroupBy(r => r.FilePath))
+    {
+        <div class="file-group">
+            <h4 class="file-path">📄 @group.Key</h4>
+            @foreach (var result in group)
+            {
+                <div class="finding-card @GetLevelClass(result.Level)">
+                    <div class="finding-header">
+                        <span class="risk-badge">@result.RiskType</span>
+                        <span class="badge badge-@GetLevelClass(result.Level)">@result.Level</span>
+                        <span class="line-no">行 @result.LineNo</span>
+                    </div>
+                    <div class="finding-description">@result.Description</div>
+                    <details class="code-context">
+                        <summary>顯示程式碼上下文</summary>
+                        <pre>@result.CodeSnippet</pre>
+                    </details>
+                    <div class="finding-recommendation">
+                        <strong>💡 修正建議：</strong> @result.Recommendation
+                    </div>
+                    <div class="ai-section">@if (AiSuggestions.TryGetValue(GetFindingKey(result), out var suggestion)){<div class="ai-result"><h5>🤖 AI 分析結果</h5><p><strong>問題說明：</strong> @suggestion.Explanation</p><div class="code-diff"><div class="code-box before"><span class="label">原始程式碼：</span><pre>@suggestion.OriginalCode</pre></div><div class="code-box after"><span class="label">修正後：</span><pre>@suggestion.FixedCode</pre></div></div><p class="security-note"><strong>⚠️ 安全提示：</strong> @suggestion.SecurityNote</p></div>}else if (LoadingAi.Contains(GetFindingKey(result))){<div class="ai-loading">🔄 AI 分析中...</div>}else if (Advisor.IsConfigured){<button class="ai-btn" @onclick="() => GetAiSuggestion(result)">🤖 取得 AI 修正建議</button>}</div>
+                </div>
+            }
+        </div>
+    }
+}
+else if (HasScanned)
+{
+    <div class="no-findings">
+        ✅ 未發現安全風險！
+    </div>
+}
+
+@code {
+    [Inject] private LlmSecurityAdvisor Advisor { get; set; } = default!;
+    
+    private string ScanMode { get; set; } = "folder";
+    private string FolderPath { get; set; } = "";
+    private string SourceCode { get; set; } = "";
+    private List<ScanFinding>? ScanResults { get; set; }
+    private bool IsScanning { get; set; }
+    private bool HasScanned { get; set; }
+    
+    // AI suggestion state
+    private Dictionary<string, AiFixSuggestion> AiSuggestions { get; set; } = new();
+    private HashSet<string> LoadingAi { get; set; } = new();
+    
+    // Batch report state
+    private HashSet<string> SelectedFindings { get; set; } = new();
+    private bool IsGeneratingReport { get; set; }
+    private string BatchReport { get; set; } = "";
+
+    private async Task RunFolderScan()
+    {
+        IsScanning = true;
+        HasScanned = false;
+        AiSuggestions.Clear();
+        SelectedFindings.Clear();
+        BatchReport = "";
+        StateHasChanged();
+        
+        await Task.Run(() =>
+        {
+            ScanResults = SecurityScanEngine.ScanFolder(FolderPath);
+        });
+        
+        IsScanning = false;
+        HasScanned = true;
+        StateHasChanged();
+    }
+
+    private void RunCodeScan()
+    {
+        HasScanned = false;
+        AiSuggestions.Clear();
+        SelectedFindings.Clear();
+        BatchReport = "";
+        ScanResults = SecurityScanEngine.Scan(SourceCode ?? "");
+        HasScanned = true;
+    }
+
+    // Selection methods
+    private void SelectAll()
+    {
+        if (ScanResults == null) return;
+        SelectedFindings = ScanResults.Select(GetFindingKey).ToHashSet();
+    }
+
+    private void SelectNone() => SelectedFindings.Clear();
+
+    private void SelectHighRisk()
+    {
+        if (ScanResults == null) return;
+        SelectedFindings = ScanResults.Where(f => f.Level == "高").Select(GetFindingKey).ToHashSet();
+    }
+
+    private async Task GenerateBatchReport()
+    {
+        if (ScanResults == null) return;
+        
+        IsGeneratingReport = true;
+        StateHasChanged();
+        
+        try
+        {
+            var selectedItems = ScanResults.Where(f => SelectedFindings.Contains(GetFindingKey(f))).ToList();
+            BatchReport = await Advisor.GenerateBatchReportAsync(selectedItems);
+        }
+        finally
+        {
+            IsGeneratingReport = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task CopyReport()
+    {
+        if (string.IsNullOrEmpty(BatchReport)) return;
+        await JS.InvokeVoidAsync("secureScan.copyToClipboard", BatchReport);
+    }
+
+    private async Task ExportMarkdown()
+    {
+        if (string.IsNullOrEmpty(BatchReport)) return;
+        var filename = $"security-report-{DateTime.Now:yyyyMMdd-HHmmss}.md";
+        await JS.InvokeVoidAsync("secureScan.downloadFile", filename, BatchReport, "text/markdown");
+    }
+
+    private async Task ExportJson()
+    {
+        if (ScanResults == null) return;
+        var selectedItems = ScanResults.Where(f => SelectedFindings.Contains(GetFindingKey(f))).ToList();
+        var json = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            GeneratedAt = DateTime.Now,
+            TotalFindings = selectedItems.Count,
+            HighRisk = selectedItems.Count(f => f.Level == "高"),
+            MediumRisk = selectedItems.Count(f => f.Level == "中"),
+            LowRisk = selectedItems.Count(f => f.Level == "低"),
+            Findings = selectedItems,
+            AiReport = BatchReport
+        }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        
+        var filename = $"security-report-{DateTime.Now:yyyyMMdd-HHmmss}.json";
+        await JS.InvokeVoidAsync("secureScan.downloadFile", filename, json, "application/json");
+    }
+
+    private async Task GetAiSuggestion(ScanFinding finding)
+    {
+        var key = GetFindingKey(finding);
+        LoadingAi.Add(key);
+        StateHasChanged();
+        
+        try
+        {
+            var suggestion = await Advisor.GetFixSuggestionAsync(finding);
+            AiSuggestions[key] = suggestion;
+        }
+        finally
+        {
+            LoadingAi.Remove(key);
+            StateHasChanged();
+        }
+    }
+
+    private string GetFindingKey(ScanFinding f) => $"{f.FilePath}:{f.LineNo}:{f.RiskType}";
+
+    private string GetLevelClass(string level) => level switch
+    {
+        "高" => "high",
+        "中" => "medium",
+        "低" => "low",
+        _ => ""
+    };
+
+    private void SetFolderMode() => ScanMode = "folder";
+    private void SetPasteMode() => ScanMode = "paste";
+}
+
+

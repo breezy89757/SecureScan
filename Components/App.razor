@@ -1,0 +1,29 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <ResourcePreloader />
+    <link rel="stylesheet" href="@Assets["app.css"]" />
+    <link rel="stylesheet" href="@Assets["SecureScan.styles.css"]" />
+    <ImportMap />
+    <HeadOutlet @rendermode="InteractiveServer" />
+</head>
+
+<body>
+    <Routes @rendermode="InteractiveServer" />
+    <div id="components-reconnect-modal">
+        <div class="reconnect-content">
+            <div class="reconnect-spinner"></div>
+            <h5 class="reconnect-title">重新連線中...</h5>
+            <p class="reconnect-message">與伺服器的連線已中斷，正在嘗試重新連接。</p>
+            <button class="reconnect-btn" onclick="location.reload()">🔄 重新載入</button>
+        </div>
+    </div>
+    <script src="@Assets["_framework/blazor.web.js"]"></script>
+    <script src="secureScan.js"></script>
+</body>
+
+</html>

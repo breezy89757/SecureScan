@@ -61,4 +61,4 @@ SecureScan/
 
 ## 🪪 License
 
-MIT License © 2026 Breez
+MIT License © 2026 breezy89757
